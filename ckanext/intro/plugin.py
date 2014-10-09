@@ -46,6 +46,9 @@ class IntroExamplePlugin(p.SingletonPlugin):
 
         map.connect('/csv', controller=controller, action='datasets_report')
 
+        map.connect('/changes', controller=controller, action='changes_metodo')
+        
+
         return map
 
     ## IAuthFunctions
@@ -56,6 +59,7 @@ class IntroExamplePlugin(p.SingletonPlugin):
         return {
             'group_create': group_create,
             'datasets_report_csv': datasets_report_csv_auth,
+            'changes_metodo': changes_metodo_auth,
         }
 
     ## IActions
@@ -63,6 +67,7 @@ class IntroExamplePlugin(p.SingletonPlugin):
         # Return a dict with the action functions that we want to add
         return {
             'datasets_report_csv': datasets_report_csv,
+            'changes_metodo_obtiene_csv' : changes_metodo_obtiene_csv,
         }
 
 
@@ -77,6 +82,47 @@ def group_create(context, data_dict):
 # Ideally auth functions should have the same name as their actions and be
 # kept on different modules. To keep things simple and all the functions on
 # the same file we will name this one slightly different.
+
+def changes_metodo_auth(context, data_dict):
+
+    return {'success': False, 'msg': 'Only sysadmins can get a report'}
+
+def changes_metodo_obtiene_csv(context, data_dict):
+    
+    p.toolkit.check_access('changes_metodo', context, data_dict)
+    # Get all datasets from the search index (actually the first 100)
+    data_dict = {
+        'q': '*:*',
+        'rows': 100,
+    }
+    result = p.toolkit.get_action('recently_changed_packages_activity_list')(context, data_dict)
+    # Create a temp file to store the csv
+    fd, tmp_file_path = tempfile.mkstemp(suffix='.csv')
+    #from sync
+    with open(tmp_file_path, 'w') as f:
+        fields = ['timestamp', 'name', 'title',
+                       'activity_type']
+        writer = csv.DictWriter(f, fieldnames=fields,
+                                quoting=csv.QUOTE_ALL)
+        writer.writerow(dict((n, n) for n in fields))
+        
+        for changes in result:
+            row = {}
+            
+            if changes['data']['package']['type'] != 'dataset' :
+                next
+                
+            if (changes['activity_type'] == 'new package') or (changes['activity_type'] == 'changed package'):
+                row[fields[0]] = changes[fields[0]].encode('utf8')
+                row[fields[1]] = changes['data']['package'][fields[1]].encode('utf8')
+                row[fields[2]] = changes['data']['package'][fields[2]].encode('utf8')
+                row[fields[3]] = changes[fields[3]].encode('utf8')
+                writer.writerow(row)
+
+        return {
+            'file': tmp_file_path,
+        }
+
 def datasets_report_csv_auth(context, data_dict):
 
     return {'success': False, 'msg': 'Only sysadmins can get a report'}
@@ -156,3 +202,26 @@ class CustomController(p.toolkit.BaseController):
             'attachment; filename="datasets.csv"'
 
         return content
+
+    def changes_metodo(self):
+        try:
+            result = p.toolkit.get_action('changes_metodo_obtiene_csv')()
+        except p.toolkit.NotAuthorized:
+            p.toolkit.abort(401, 'Not admin')
+        with open(result['file'], 'r') as f:
+            content = f.read()
+
+        # Clean up
+        os.remove(result['file'])
+
+        # Modify the headers of the response to reflect that we are outputing
+        # a CSV file
+        p.toolkit.response.headers['Content-Type'] = 'application/csv'
+        p.toolkit.response.headers['Content-Length'] = len(content)
+        p.toolkit.response.headers['Content-Disposition'] = \
+            'attachment; filename="datasets.csv"'
+
+        return content
+
+        
+    
